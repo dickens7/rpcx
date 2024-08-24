@@ -365,23 +365,13 @@ func (s *Server) sendResponse(ctx *share.Context, conn net.Conn, err error, req,
 
 		data := res.EncodeSlicePointer()
 		if s.AsyncWrite {
-			if s.pool != nil {
-				s.pool.Submit(func() {
-					if s.writeTimeout != 0 {
-						conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
-					}
-					conn.Write(*data)
-					protocol.PutData(data)
-				})
-			} else {
-				go func() {
-					if s.writeTimeout != 0 {
-						conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
-					}
-					conn.Write(*data)
-					protocol.PutData(data)
-				}()
-			}
+			go func() {
+				if s.writeTimeout != 0 {
+					conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+				}
+				conn.Write(*data)
+				protocol.PutData(data)
+			}()
 		} else {
 			if s.writeTimeout != 0 {
 				conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
