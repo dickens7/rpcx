@@ -20,7 +20,7 @@ type Context struct {
 
 // NewContext creates a server.Context for Handler.
 func NewContext(ctx *share.Context, conn net.Conn, req *protocol.Message, async bool, plugins PluginContainer) *Context {
-	return &Context{conn: conn, req: req, ctx: ctx, async: async}
+	return &Context{conn: conn, req: req, ctx: ctx, async: async, plugins: plugins}
 }
 
 // Get returns value for key.
