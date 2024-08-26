@@ -123,21 +123,15 @@ func (ctx *Context) Write(v interface{}) error {
 		res.SetCompressType(req.CompressType())
 	}
 
-	ctx.plugins.DoPreWriteResponse(ctx.ctx, req, res, nil)
-	respData := res.EncodeSlicePointer()
-
-	var err error
-	if ctx.async {
-		go func() {
-			_, err = ctx.conn.Write(*respData)
-			protocol.PutData(respData)
-		}()
-	} else {
-		_, err = ctx.conn.Write(*respData)
+	go func() {
+		ctx.plugins.DoPreWriteResponse(ctx.ctx, req, res, nil)
+		respData := res.EncodeSlicePointer()
+		_, _ = ctx.conn.Write(*respData)
 		protocol.PutData(respData)
-	}
-	ctx.plugins.DoPostWriteResponse(ctx.ctx, req, res, nil)
-	return err
+		ctx.plugins.DoPostWriteResponse(ctx.ctx, req, res, nil)
+	}()
+
+	return nil
 }
 
 func (ctx *Context) WriteError(err error) error {

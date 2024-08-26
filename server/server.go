@@ -360,25 +360,16 @@ func (s *Server) sendResponse(ctx *share.Context, conn net.Conn, err error, req,
 		res.SetCompressType(req.CompressType())
 	}
 
-	s.Plugins.DoPreWriteResponse(ctx, req, res, err)
-
-	data := res.EncodeSlicePointer()
-	if s.AsyncWrite {
-		go func() {
-			if s.writeTimeout != 0 {
-				conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
-			}
-			conn.Write(*data)
-			protocol.PutData(data)
-		}()
-	} else {
+	go func() {
+		s.Plugins.DoPreWriteResponse(ctx, req, res, err)
+		data := res.EncodeSlicePointer()
 		if s.writeTimeout != 0 {
 			conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
 		}
 		conn.Write(*data)
 		protocol.PutData(data)
-	}
-	s.Plugins.DoPostWriteResponse(ctx, req, res, err)
+		s.Plugins.DoPostWriteResponse(ctx, req, res, err)
+	}()
 }
 
 func (s *Server) serveConn(conn net.Conn) {
