@@ -524,7 +524,7 @@ func (s *Server) processOneRequest(ctx *share.Context, req *protocol.Message, co
 			} else {
 				log.Errorf("[handler internal error]: servicepath: %s, servicemethod, err: %v，stacks: %s", req.ServicePath, req.ServiceMethod, r, buf)
 			}
-			sctx := NewContext(ctx, conn, req, s.AsyncWrite)
+			sctx := NewContext(ctx, conn, req, s.AsyncWrite, s.Plugins)
 			sctx.WriteError(fmt.Errorf("%v", r))
 		}
 	}()
@@ -568,7 +568,7 @@ func (s *Server) processOneRequest(ctx *share.Context, req *protocol.Message, co
 
 	// use handlers first
 	if handler, ok := s.router[req.ServicePath+"."+req.ServiceMethod]; ok {
-		sctx := NewContext(ctx, conn, req, s.AsyncWrite)
+		sctx := NewContext(ctx, conn, req, s.AsyncWrite, s.Plugins)
 		err := handler(sctx)
 		if err != nil {
 			if s.HandleServiceError != nil {
