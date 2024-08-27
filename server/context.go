@@ -123,21 +123,26 @@ func (ctx *Context) Write(v interface{}) error {
 		res.SetCompressType(req.CompressType())
 	}
 
+	// async
+	if ctx.async {
+		ch, ok := ctx.ctx.Value(AsyncWriteCh).(chan *protocol.Message)
+		if !ok {
+			return fmt.Errorf("async write chan")
+		}
+		select {
+		case ch <- res:
+		default:
+			return fmt.Errorf("could not write message, conn outgoing queue full")
+		}
+		return nil
+	}
+
 	ctx.plugins.DoPreWriteResponse(ctx.ctx, req, res, nil)
 	respData := res.EncodeSlicePointer()
-
-	var err error
-	if ctx.async {
-		go func() {
-			_, err = ctx.conn.Write(*respData)
-			protocol.PutData(respData)
-		}()
-	} else {
-		_, err = ctx.conn.Write(*respData)
-		protocol.PutData(respData)
-	}
+	_, _ = ctx.conn.Write(*respData)
+	protocol.PutData(respData)
 	ctx.plugins.DoPostWriteResponse(ctx.ctx, req, res, nil)
-	return err
+	return nil
 }
 
 func (ctx *Context) WriteError(err error) error {

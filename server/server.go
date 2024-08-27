@@ -64,6 +64,8 @@ var (
 	TagContextKey = &contextKey{"service-tag"}
 	// HttpConnContextKey is used to store http connection.
 	HttpConnContextKey = &contextKey{"http-conn"}
+
+	AsyncWriteCh = &contextKey{"async-write-ch"}
 )
 
 type Handler func(ctx *Context) error
@@ -360,24 +362,28 @@ func (s *Server) sendResponse(ctx *share.Context, conn net.Conn, err error, req,
 		res.SetCompressType(req.CompressType())
 	}
 
-	s.Plugins.DoPreWriteResponse(ctx, req, res, err)
-
-	data := res.EncodeSlicePointer()
 	if s.AsyncWrite {
-		go func() {
-			if s.writeTimeout != 0 {
-				conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
-			}
-			conn.Write(*data)
-			protocol.PutData(data)
-		}()
-	} else {
-		if s.writeTimeout != 0 {
-			conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+		ch, ok := ctx.Value(AsyncWriteCh).(chan *protocol.Message)
+		if !ok {
+			log.Errorf("async write chan")
+			return
 		}
-		conn.Write(*data)
-		protocol.PutData(data)
+		select {
+		case ch <- res:
+		default:
+			log.Errorf("could not write message, conn outgoing queue full")
+			return
+		}
+		return
 	}
+
+	s.Plugins.DoPreWriteResponse(ctx, req, res, err)
+	data := res.EncodeSlicePointer()
+	if s.writeTimeout != 0 {
+		conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+	}
+	conn.Write(*data)
+	protocol.PutData(data)
 	s.Plugins.DoPostWriteResponse(ctx, req, res, err)
 }
 
@@ -424,6 +430,39 @@ func (s *Server) serveConn(conn net.Conn) {
 		}
 	}
 
+	asyncWriteCh := make(chan *protocol.Message, 100000)
+	if s.AsyncWrite {
+		// write
+		go func() {
+			if err := recover(); err != nil {
+				const size = 64 << 10
+				buf := make([]byte, size)
+				ss := runtime.Stack(buf, false)
+				if ss > size {
+					ss = size
+				}
+				buf = buf[:ss]
+				log.Errorf("serving %s panic error: %s, stack:\n %s", conn.RemoteAddr(), err, buf)
+			}
+			for {
+				if s.isShutdown() {
+					return
+				}
+				select {
+				case <-s.doneChan:
+					return
+				case res := <-asyncWriteCh:
+					data := res.EncodeSlicePointer()
+					if s.writeTimeout != 0 {
+						conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+					}
+					conn.Write(*data)
+					protocol.PutData(data)
+				}
+			}
+		}()
+	}
+
 	r := bufio.NewReaderSize(conn, ReaderBuffsize)
 
 	// read requests and handle it
@@ -439,6 +478,7 @@ func (s *Server) serveConn(conn net.Conn) {
 
 		// create a rpcx Context
 		ctx := share.WithValue(context.Background(), RemoteConnContextKey, conn)
+		ctx = share.WithValue(ctx, AsyncWriteCh, asyncWriteCh)
 
 		// read a request from the underlying connection
 		req, err := s.readRequest(ctx, r)
@@ -510,6 +550,7 @@ func (s *Server) serveConn(conn net.Conn) {
 			go s.processOneRequest(ctx, req, conn)
 		}
 	}
+
 }
 
 func (s *Server) processOneRequest(ctx *share.Context, req *protocol.Message, conn net.Conn) {
