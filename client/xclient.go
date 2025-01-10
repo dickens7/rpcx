@@ -16,11 +16,12 @@ import (
 	"time"
 
 	"github.com/juju/ratelimit"
+	"golang.org/x/sync/singleflight"
+
 	ex "github.com/smallnest/rpcx/errors"
 	"github.com/smallnest/rpcx/log"
 	"github.com/smallnest/rpcx/protocol"
 	"github.com/smallnest/rpcx/share"
-	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -582,6 +583,7 @@ func (c *xClient) Call(ctx context.Context, serviceMethod string, args interface
 	switch c.failMode {
 	case Failtry:
 		retries := c.option.Retries
+		retryInterval := c.option.RetryInterval
 		for retries >= 0 {
 			retries--
 
@@ -602,6 +604,7 @@ func (c *xClient) Call(ctx context.Context, serviceMethod string, args interface
 				c.removeClient(k, c.servicePath, serviceMethod, client)
 			}
 			client, e = c.getCachedClient(k, c.servicePath, serviceMethod, args)
+			time.Sleep(retryInterval)
 		}
 		if err == nil {
 			err = e
@@ -609,6 +612,7 @@ func (c *xClient) Call(ctx context.Context, serviceMethod string, args interface
 		return err
 	case Failover:
 		retries := c.option.Retries
+		retryInterval := c.option.RetryInterval
 		for retries >= 0 {
 			retries--
 
@@ -628,6 +632,7 @@ func (c *xClient) Call(ctx context.Context, serviceMethod string, args interface
 			if uncoverError(err) {
 				c.removeClient(k, c.servicePath, serviceMethod, client)
 			}
+			time.Sleep(retryInterval)
 			// select another server
 			k, client, e = c.selectClient(ctx, c.servicePath, serviceMethod, args)
 		}
@@ -940,6 +945,9 @@ func (c *xClient) Broadcast(ctx context.Context, serviceMethod string, args inte
 	var replyOnce sync.Once
 
 	ctx = setServerTimeout(ctx)
+	// add timeout after set server timeout, only prevent client hanging
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	callPlugins := make([]RPCClient, 0, len(c.servers))
 	clients := make(map[string]RPCClient)
 	c.mu.Lock()
@@ -978,7 +986,9 @@ func (c *xClient) Broadcast(ctx context.Context, serviceMethod string, args inte
 			}
 
 			e := c.wrapCall(ctx, client, serviceMethod, args, clonedReply)
-			done <- (e == nil)
+			defer func() {
+				done <- (e == nil)
+			}()
 			if e != nil {
 				if uncoverError(e) {
 					c.removeClient(k, c.servicePath, serviceMethod, client)
@@ -994,7 +1004,6 @@ func (c *xClient) Broadcast(ctx context.Context, serviceMethod string, args inte
 		}()
 	}
 
-	timeout := time.NewTimer(time.Minute)
 check:
 	for {
 		select {
@@ -1003,12 +1012,14 @@ check:
 			if l == 0 || !result { // all returns or some one returns an error
 				break check
 			}
-		case <-timeout.C:
-			err.Append(errors.New(("timeout")))
-			break check
 		}
 	}
-	timeout.Stop()
+
+	select {
+	case <-ctx.Done():
+		err.Append(errors.New(("timeout")))
+	default:
+	}
 
 	return err.ErrorOrNil()
 }
@@ -1031,6 +1042,10 @@ func (c *xClient) Fork(ctx context.Context, serviceMethod string, args interface
 	}
 
 	ctx = setServerTimeout(ctx)
+
+	// add timeout after set server timeout, only prevent client hanging
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	callPlugins := make([]RPCClient, 0, len(c.servers))
 	clients := make(map[string]RPCClient)
 	c.mu.Lock()
@@ -1076,7 +1091,9 @@ func (c *xClient) Fork(ctx context.Context, serviceMethod string, args interface
 					reflect.ValueOf(reply).Elem().Set(reflect.ValueOf(clonedReply).Elem())
 				})
 			}
-			done <- (e == nil)
+			defer func() {
+				done <- (e == nil)
+			}()
 			if e != nil {
 				if uncoverError(e) {
 					c.removeClient(k, c.servicePath, serviceMethod, client)
@@ -1086,7 +1103,6 @@ func (c *xClient) Fork(ctx context.Context, serviceMethod string, args interface
 		}()
 	}
 
-	timeout := time.NewTimer(time.Minute)
 check:
 	for {
 		select {
@@ -1098,13 +1114,14 @@ check:
 			if l == 0 { // all returns or some one returns an error
 				break check
 			}
-
-		case <-timeout.C:
-			err.Append(errors.New(("timeout")))
-			break check
 		}
 	}
-	timeout.Stop()
+
+	select {
+	case <-ctx.Done():
+		err.Append(errors.New(("timeout")))
+	default:
+	}
 
 	return err.ErrorOrNil()
 }
@@ -1128,6 +1145,10 @@ func (c *xClient) Inform(ctx context.Context, serviceMethod string, args interfa
 	}
 
 	ctx = setServerTimeout(ctx)
+
+	// add timeout after set server timeout, only prevent client hanging
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	callPlugins := make([]RPCClient, 0, len(c.servers))
 	clients := make(map[string]RPCClient)
 	c.mu.Lock()
@@ -1171,7 +1192,9 @@ func (c *xClient) Inform(ctx context.Context, serviceMethod string, args interfa
 			}
 
 			e := c.wrapCall(ctx, client, serviceMethod, args, clonedReply)
-			done <- (e == nil)
+			defer func() {
+				done <- (e == nil)
+			}()
 			if e != nil {
 				if uncoverError(e) {
 					c.removeClient(k, c.servicePath, serviceMethod, client)
@@ -1200,7 +1223,6 @@ func (c *xClient) Inform(ctx context.Context, serviceMethod string, args interfa
 		}()
 	}
 
-	timeout := time.NewTimer(time.Minute)
 check:
 	for {
 		select {
@@ -1209,12 +1231,14 @@ check:
 			if l == 0 { // all returns or some one returns an error
 				break check
 			}
-		case <-timeout.C:
-			err.Append(errors.New(("timeout")))
-			break check
 		}
 	}
-	timeout.Stop()
+
+	select {
+	case <-ctx.Done():
+		err.Append(errors.New(("timeout")))
+	default:
+	}
 
 	return receipts, err.ErrorOrNil()
 }
