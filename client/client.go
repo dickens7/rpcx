@@ -202,6 +202,8 @@ type Option struct {
 
 	// not call server message handler
 	NilCallServerMessageHandler func(msg *protocol.Message)
+
+	PreSend func(ctx context.Context, task func())
 }
 
 // Call represents an active RPC.
@@ -294,7 +296,13 @@ func (client *Client) Go(ctx context.Context, servicePath, serviceMethod string,
 		log.Debugf("client.Go send request for %s.%s, args: %+v in case of client call", servicePath, serviceMethod, args)
 	}
 
-	go client.send(ctx, call)
+	if client.option.PreSend != nil {
+		client.option.PreSend(ctx, func() {
+			client.send(ctx, call)
+		})
+	} else {
+		go client.send(ctx, call)
+	}
 
 	return call
 }
