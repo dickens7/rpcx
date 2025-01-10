@@ -92,6 +92,8 @@ type Server struct {
 	AsyncOutgoing         int  // write message conn outgoing queue max
 	pool                  WorkerPool
 
+	DiyProcess func(ctx *share.Context, req *protocol.Message, task func())
+
 	serviceMapMu sync.RWMutex
 	serviceMap   map[string]*service
 
@@ -512,7 +514,11 @@ func (s *Server) serveConn(conn net.Conn) {
 			continue
 		}
 
-		if s.pool != nil {
+		if s.DiyProcess != nil {
+			s.DiyProcess(ctx, req, func() {
+				s.processOneRequest(ctx, req, conn)
+			})
+		} else if s.pool != nil {
 			s.pool.Submit(func() {
 				s.processOneRequest(ctx, req, conn)
 			})
