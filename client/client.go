@@ -295,7 +295,11 @@ func (client *Client) Go(ctx context.Context, servicePath, serviceMethod string,
 	}
 
 	if client.option.PreSend != nil {
+		type contextKey struct{}
+		var clientKey = contextKey{}
+		ctx = context.WithValue(ctx, clientKey, client) // 将 client 存储在 context 中
 		client.option.PreSend(ctx, func() {
+			client := ctx.Value(clientKey).(*Client) // 从 context 中获取 client
 			client.send(ctx, call)
 		})
 	} else {
