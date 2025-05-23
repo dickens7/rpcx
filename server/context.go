@@ -14,12 +14,16 @@ type Context struct {
 	req  *protocol.Message
 	ctx  *share.Context
 
-	async bool
+	async   bool
+	plugins PluginContainer
 }
 
 // NewContext creates a server.Context for Handler.
-func NewContext(ctx *share.Context, conn net.Conn, req *protocol.Message, async bool) *Context {
-	return &Context{conn: conn, req: req, ctx: ctx, async: async}
+func NewContext(ctx *share.Context, conn net.Conn, req *protocol.Message, async bool, plugins PluginContainer) *Context {
+	if plugins == nil {
+		plugins = &pluginContainer{}
+	}
+	return &Context{conn: conn, req: req, ctx: ctx, async: async, plugins: plugins}
 }
 
 // Get returns value for key.
@@ -121,6 +125,8 @@ func (ctx *Context) Write(v interface{}) error {
 	if len(res.Payload) > 1024 && req.CompressType() != protocol.None {
 		res.SetCompressType(req.CompressType())
 	}
+
+	ctx.plugins.DoPreWriteResponse(ctx.ctx, ctx.req, res, nil)
 	respData := res.EncodeSlicePointer()
 
 	var err error
@@ -133,7 +139,7 @@ func (ctx *Context) Write(v interface{}) error {
 		_, err = ctx.conn.Write(*respData)
 		protocol.PutData(respData)
 	}
-
+	ctx.plugins.DoPostWriteResponse(ctx.ctx, ctx.req, res, nil)
 	return err
 }
 
@@ -169,10 +175,11 @@ func (ctx *Context) WriteError(err error) error {
 
 	res.SetMessageStatusType(protocol.Error)
 	res.Metadata[protocol.ServiceError] = err.Error()
+	ctx.plugins.DoPreWriteResponse(ctx.ctx, ctx.req, res, err)
 
 	respData := res.EncodeSlicePointer()
 	ctx.conn.Write(*respData)
 	protocol.PutData(respData)
-
+	ctx.plugins.DoPostWriteResponse(ctx.ctx, ctx.req, res, nil)
 	return nil
 }
