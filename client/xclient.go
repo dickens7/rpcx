@@ -867,6 +867,7 @@ func (c *xClient) SendRaw(ctx context.Context, r *protocol.Message) (map[string]
 			if uncoverError(err) {
 				c.removeClient(k, r.ServicePath, r.ServiceMethod, client)
 			}
+			return nil, nil, err
 		}
 
 		return m, payload, nil
